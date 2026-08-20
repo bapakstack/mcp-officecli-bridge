@@ -4,8 +4,9 @@
 
 FROM node:20-slim
 
-# Needed to download OfficeCLI binary + healthcheck
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*
+# Needed to download OfficeCLI binary + healthcheck + .NET ICU dependency
+# OfficeCLI is a .NET binary and requires libicu on slim images
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates libicu72 && rm -rf /var/lib/apt/lists/*
 
 # Install OfficeCLI binary (Linux x64). Pin version via OFFICECLI_VERSION if you want reproducibility.
 ARG OFFICECLI_VERSION=latest
@@ -22,7 +23,9 @@ RUN set -eux; \
     echo "Downloading $URL"; \
     curl -fsSL "$URL" -o /usr/local/bin/officecli; \
     chmod +x /usr/local/bin/officecli; \
-    /usr/local/bin/officecli --version || (echo "officecli binary check failed" && exit 1)
+    /usr/local/bin/officecli --version 2>&1 || (echo "Retrying with DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1"; DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 /usr/local/bin/officecli --version) || (echo "officecli binary check failed" && exit 1)
+
+ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false
 
 WORKDIR /app
 
