@@ -75,7 +75,11 @@ async function proxyToStdio(body: unknown): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const child = spawn(OFFICECLI_BIN, ['mcp'], {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: process.env.DOTNET_SYSTEM_GLOBALIZATION_INVARIANT || '0' },
+      env: {
+        ...process.env,
+        DOTNET_SYSTEM_GLOBALIZATION_INVARIANT:
+          process.env.DOTNET_SYSTEM_GLOBALIZATION_INVARIANT || '0',
+      },
     })
 
     let stdout = ''
