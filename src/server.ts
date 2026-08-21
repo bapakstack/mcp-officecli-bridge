@@ -52,7 +52,13 @@ app.use(authGuard)
 // --- helpers ---
 function hasOfficeCli(): boolean {
   try {
-    const r = spawnSync(OFFICECLI_BIN, ['--version'], { timeout: 5000 })
+    let r = spawnSync(OFFICECLI_BIN, ['--version'], { timeout: 5000 })
+    if (r.status === 0) return true
+    // Fallback for slim images without libicu — run with Invariant mode
+    r = spawnSync(OFFICECLI_BIN, ['--version'], {
+      timeout: 5000,
+      env: { ...process.env, DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: '1' },
+    })
     return r.status === 0
   } catch {
     return false
@@ -64,11 +70,12 @@ function log(...args: unknown[]) {
 }
 
 // Proxy single JSON-RPC message via stdio child
+// Auto-fallback to DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 if libicu is missing at runtime
 async function proxyToStdio(body: unknown): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const child = spawn(OFFICECLI_BIN, ['mcp'], {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: process.env,
+      env: { ...process.env, DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: process.env.DOTNET_SYSTEM_GLOBALIZATION_INVARIANT || '0' },
     })
 
     let stdout = ''

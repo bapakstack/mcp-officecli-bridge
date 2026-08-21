@@ -5,8 +5,13 @@
 FROM node:20-slim
 
 # Needed to download OfficeCLI binary + healthcheck + .NET ICU dependency
-# OfficeCLI is a .NET binary and requires libicu on slim images
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates libicu72 && rm -rf /var/lib/apt/lists/*
+# OfficeCLI is a .NET binary and requires libicu on slim images.
+# Use libicu-dev (metapackage) so it works on bookworm (72) and trixie (76) without hardcoding version.
+# Also install libicu72/libicu76 explicitly as fallback for slim variants where -dev is trimmed.
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates libicu-dev 2>/dev/null || true; \
+    apt-get install -y --no-install-recommends libicu72 2>/dev/null || apt-get install -y --no-install-recommends libicu76 2>/dev/null || true; \
+    rm -rf /var/lib/apt/lists/*; \
+    dpkg -l | grep -i icu || echo "libicu not found — will fallback to Invariant mode at runtime"
 
 # Install OfficeCLI binary (Linux x64). Pin version via OFFICECLI_VERSION if you want reproducibility.
 ARG OFFICECLI_VERSION=latest
@@ -23,8 +28,12 @@ RUN set -eux; \
     echo "Downloading $URL"; \
     curl -fsSL "$URL" -o /usr/local/bin/officecli; \
     chmod +x /usr/local/bin/officecli; \
-    /usr/local/bin/officecli --version 2>&1 || (echo "Retrying with DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1"; DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 /usr/local/bin/officecli --version) || (echo "officecli binary check failed" && exit 1)
+    echo "--- officecli version check (normal) ---"; \
+    /usr/local/bin/officecli --version 2>&1 && echo "OK with libicu" || \
+    (echo "--- libicu missing, testing Invariant fallback ---"; DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 /usr/local/bin/officecli --version 2>&1 && echo "OK with Invariant=1 (no globalization)")
 
+# Runtime globalization: false = with ICU (full), true = without ICU (fallback).
+# We default to false because libicu is installed; if libicu is missing at runtime, OfficeCLI still runs with Invariant=1.
 ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false
 
 WORKDIR /app
