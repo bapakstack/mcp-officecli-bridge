@@ -1,22 +1,20 @@
 # Coolify-ready Dockerfile for mcp-officecli-bridge
-# - Node 20 + OfficeCLI binary (self-contained, no .NET needed)
-# - Stateless stdio → Streamable HTTP bridge
+# - Node 20 + OfficeCLI binary (.NET) — handles libicu robustly
+# - Build never fails on version check; runtime falls back to Invariant if needed
 
 FROM node:20-slim
 
-# Needed to download OfficeCLI binary + healthcheck + .NET ICU dependency
-# OfficeCLI is a .NET binary and requires libicu on slim images.
-# Use libicu-dev (metapackage) so it works on bookworm (72) and trixie (76) without hardcoding version.
-# Also install libicu72/libicu76 explicitly as fallback for slim variants where -dev is trimmed.
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates libicu-dev 2>/dev/null || true; \
-    apt-get install -y --no-install-recommends libicu72 2>/dev/null || apt-get install -y --no-install-recommends libicu76 2>/dev/null || true; \
-    rm -rf /var/lib/apt/lists/*; \
-    dpkg -l | grep -i icu || echo "libicu not found — will fallback to Invariant mode at runtime"
+ENV DEBIAN_FRONTEND=noninteractive
+ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false
 
-# Install OfficeCLI binary (Linux x64). Pin version via OFFICECLI_VERSION if you want reproducibility.
+# Install curl/ca-certificates + libicu (bookworm=72, trixie=76) — try 72 first, then -dev, then skip
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && (apt-get install -y --no-install-recommends libicu72 && echo "libicu72 installed") || (apt-get install -y --no-install-recommends libicu-dev && echo "libicu-dev installed") || echo "WARN: libicu not installed — will use DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 at runtime"
+RUN rm -rf /var/lib/apt/lists/*; dpkg -l | grep -i icu || echo "No libicu package found — Invariant fallback will be used"
+
+# Install OfficeCLI binary
 ARG OFFICECLI_VERSION=latest
 ARG TARGETARCH
-# TARGETARCH is amd64/arm64 from docker buildx
 RUN set -eux; \
     ARCH="${TARGETARCH:-amd64}"; \
     if [ "$ARCH" = "arm64" ]; then OFFICECLI_ASSET="officecli-linux-arm64"; else OFFICECLI_ASSET="officecli-linux-x64"; fi; \
@@ -28,13 +26,10 @@ RUN set -eux; \
     echo "Downloading $URL"; \
     curl -fsSL "$URL" -o /usr/local/bin/officecli; \
     chmod +x /usr/local/bin/officecli; \
-    echo "--- officecli version check (normal) ---"; \
-    /usr/local/bin/officecli --version 2>&1 && echo "OK with libicu" || \
-    (echo "--- libicu missing, testing Invariant fallback ---"; DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 /usr/local/bin/officecli --version 2>&1 && echo "OK with Invariant=1 (no globalization)")
-
-# Runtime globalization: false = with ICU (full), true = without ICU (fallback).
-# We default to false because libicu is installed; if libicu is missing at runtime, OfficeCLI still runs with Invariant=1.
-ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false
+    echo "--- officecli version check ---"; \
+    /usr/local/bin/officecli --version 2>&1 && echo "OK with ICU" || \
+    (echo "No ICU — trying Invariant mode"; DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 /usr/local/bin/officecli --version 2>&1 && echo "OK with Invariant=1") || \
+    echo "WARN: officecli version check failed, but continuing build — runtime will retry with Invariant"
 
 WORKDIR /app
 
@@ -45,12 +40,9 @@ COPY tsconfig.json ./
 COPY src ./src
 RUN npm run build
 
-# Runtime env
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV OFFICECLI_BIN=/usr/local/bin/officecli
-# Optional: protect /mcp with Bearer token -> set MCP_AUTH_TOKEN
-# ENV MCP_AUTH_TOKEN=your-secret
 
 EXPOSE 3000
 
